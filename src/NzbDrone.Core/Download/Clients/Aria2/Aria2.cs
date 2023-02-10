@@ -8,6 +8,7 @@ using NzbDrone.Common.Disk;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Configuration;
+using NzbDrone.Core.Indexers;
 using NzbDrone.Core.MediaFiles.TorrentInfo;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.RemotePathMappings;
@@ -22,15 +23,40 @@ namespace NzbDrone.Core.Download.Clients.Aria2
         public override string Name => "Aria2";
 
         public Aria2(IAria2Proxy proxy,
-                        ITorrentFileInfoReader torrentFileInfoReader,
-                        IHttpClient httpClient,
-                        IConfigService configService,
-                        IDiskProvider diskProvider,
-                        IRemotePathMappingService remotePathMappingService,
-                        Logger logger)
+            ITorrentFileInfoReader torrentFileInfoReader,
+            IHttpClient httpClient,
+            IConfigService configService,
+            IDiskProvider diskProvider,
+            IRemotePathMappingService remotePathMappingService,
+            Logger logger)
             : base(torrentFileInfoReader, httpClient, configService, diskProvider, remotePathMappingService, logger)
         {
             _proxy = proxy;
+        }
+
+        public override string Download(RemoteEpisode remoteEpisode)
+        {
+            // if(remoteEpisode.Release.DownloadProtocol == DownloadProtocol.Download) supposedly
+            var releaseDownloadUrl = remoteEpisode.Release.DownloadUrl;
+            return releaseDownloadUrl.EndsWith("mp4")
+                ? AddFromFileLink(remoteEpisode, releaseDownloadUrl.GetHashCode() + "", releaseDownloadUrl)
+                : base.Download(remoteEpisode);
+        }
+
+        protected string AddFromFileLink(RemoteEpisode remoteEpisode, string hash, string downloadLink)
+        {
+            var gid = _proxy.AddFile(Settings, downloadLink);
+            var tries = 10;
+            var retryDelay = 500;
+            if (!WaitForTorrent(gid, hash, tries, retryDelay))
+            {
+                _logger.Warn($"Aria2 could not add magnent within {tries * retryDelay / 1000} seconds, download may remain stuck: {downloadLink}.");
+                return hash;
+            }
+
+            _logger.Debug($"Aria2 AddFromMagnetLink '{hash}' -> '{gid}'");
+
+            return gid;
         }
 
         protected override string AddFromMagnetLink(RemoteEpisode remoteEpisode, string hash, string magnetLink)
@@ -125,13 +151,15 @@ namespace NzbDrone.Core.Download.Clients.Aria2
 
                 var outputPath = _remotePathMappingService.RemapRemoteToLocal(Settings.Host, new OsPath(GetOutputPath(torrent)));
 
+                var downloadId = torrent.InfoHash != null ? torrent.InfoHash.ToUpper() : torrent.Gid;
+
                 yield return new DownloadClientItem
                 {
                     CanMoveFiles = false,
                     CanBeRemoved = torrent.Status == "complete",
                     Category = null,
                     DownloadClientInfo = DownloadClientItemClientInfo.FromDownloadClient(this),
-                    DownloadId = torrent.InfoHash?.ToUpper(),
+                    DownloadId = downloadId,
                     IsEncrypted = false,
                     Message = torrent.ErrorMessage,
                     OutputPath = outputPath,

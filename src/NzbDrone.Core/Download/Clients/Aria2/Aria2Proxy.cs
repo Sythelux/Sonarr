@@ -17,6 +17,7 @@ namespace NzbDrone.Core.Download.Clients.Aria2
         Dictionary<string, string> GetGlobals(Aria2Settings settings);
         List<Aria2Status> GetTorrents(Aria2Settings settings);
         Aria2Status GetFromGID(Aria2Settings settings, string gid);
+        string AddFile(Aria2Settings settings, string downloadLink);
     }
 
     public class Aria2Proxy : IAria2Proxy
@@ -93,6 +94,15 @@ namespace NzbDrone.Core.Download.Clients.Aria2
             var result = new Aria2Dict(element);
 
             return result.Dict;
+        }
+
+        public string AddFile(Aria2Settings settings, string downloadLink)
+        {
+            var response = ExecuteRequest(settings, "aria2.addUri", GetToken(settings), new List<string> { downloadLink });
+
+            var gid = response.GetStringResponse();
+
+            return gid;
         }
 
         public string AddMagnet(Aria2Settings settings, string magnet)
